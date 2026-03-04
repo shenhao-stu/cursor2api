@@ -222,6 +222,8 @@ async function handleNonStream(res: Response, cursorReq: ReturnType<typeof conve
     const fullText = await sendCursorRequestFull(cursorReq);
     const hasTools = (body.tools?.length ?? 0) > 0;
 
+    console.log(`[Handler] 原始响应 (${fullText.length} chars): ${fullText.substring(0, 300)}...`);
+
     const contentBlocks: AnthropicContentBlock[] = [];
     let stopReason = 'end_turn';
 

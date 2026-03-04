@@ -172,9 +172,31 @@ export async function getXIsHumanToken(): Promise<string> {
 // ==================== API 请求 ====================
 
 /**
- * 发送请求到 Cursor /api/chat 并以流式方式处理响应
+ * 发送请求到 Cursor /api/chat 并以流式方式处理响应（带重试）
  */
 export async function sendCursorRequest(
+    req: CursorChatRequest,
+    onChunk: (event: CursorSSEEvent) => void,
+): Promise<void> {
+    const maxRetries = 2;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            await sendCursorRequestInner(req, onChunk);
+            return;
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[Cursor] 请求失败 (${attempt}/${maxRetries}): ${msg}`);
+            if (attempt < maxRetries) {
+                console.log(`[Cursor] ${2}s 后重试...`);
+                await new Promise(r => setTimeout(r, 2000));
+            } else {
+                throw err;
+            }
+        }
+    }
+}
+
+async function sendCursorRequestInner(
     req: CursorChatRequest,
     onChunk: (event: CursorSSEEvent) => void,
 ): Promise<void> {
