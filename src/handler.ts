@@ -120,10 +120,15 @@ export function isRefusal(text: string): boolean {
 
 export function listModels(_req: Request, res: Response): void {
     const model = getConfig().cursorModel;
+    const now = Math.floor(Date.now() / 1000);
     res.json({
         object: 'list',
         data: [
-            { id: model, object: 'model', created: 1700000000, owned_by: 'anthropic' },
+            { id: model, object: 'model', created: now, owned_by: 'anthropic' },
+            // Cursor IDE 推荐使用以下 Claude 模型名（避免走 /v1/responses 格式）
+            { id: 'claude-sonnet-4-5-20250929', object: 'model', created: now, owned_by: 'anthropic' },
+            { id: 'claude-sonnet-4-20250514', object: 'model', created: now, owned_by: 'anthropic' },
+            { id: 'claude-3-5-sonnet-20241022', object: 'model', created: now, owned_by: 'anthropic' },
         ],
     });
 }
@@ -479,16 +484,26 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
     try {
         await executeStream();
 
-        // 无工具模式：检测拒绝并自动重试
-        if (!hasTools) {
-            while (isRefusal(fullResponse) && retryCount < MAX_REFUSAL_RETRIES) {
-                retryCount++;
-                console.log(`[Handler] 检测到身份拒绝（第${retryCount}次），自动重试...原始: ${fullResponse.substring(0, 80)}...`);
-                const retryBody = buildRetryRequest(body, retryCount - 1);
-                activeCursorReq = await convertToCursorRequest(retryBody);
-                await executeStream();
-            }
-            if (isRefusal(fullResponse)) {
+        console.log(`[Handler] 原始响应 (${fullResponse.length} chars, tools=${hasTools}): ${fullResponse.substring(0, 200)}${fullResponse.length > 200 ? '...' : ''}`);
+
+        // 拒绝检测 + 自动重试（工具模式和非工具模式均生效）
+        const shouldRetryRefusal = () => {
+            if (!isRefusal(fullResponse)) return false;
+            if (hasTools && hasToolCalls(fullResponse)) return false;
+            return true;
+        };
+
+        while (shouldRetryRefusal() && retryCount < MAX_REFUSAL_RETRIES) {
+            retryCount++;
+            console.log(`[Handler] 检测到拒绝（第${retryCount}次），自动重试...原始: ${fullResponse.substring(0, 100)}`);
+            const retryBody = buildRetryRequest(body, retryCount - 1);
+            activeCursorReq = await convertToCursorRequest(retryBody);
+            await executeStream();
+            console.log(`[Handler] 重试响应 (${fullResponse.length} chars): ${fullResponse.substring(0, 200)}${fullResponse.length > 200 ? '...' : ''}`);
+        }
+
+        if (shouldRetryRefusal()) {
+            if (!hasTools) {
                 // 工具能力询问 → 返回详细能力描述；其他 → 返回身份回复
                 if (isToolCapabilityQuestion(body)) {
                     console.log(`[Handler] 工具能力询问被拒绝，返回 Claude 能力描述`);
@@ -497,7 +512,19 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
                     console.log(`[Handler] 重试${MAX_REFUSAL_RETRIES}次后仍被拒绝，返回 Claude 身份回复`);
                     fullResponse = CLAUDE_IDENTITY_RESPONSE;
                 }
+            } else {
+                console.log(`[Handler] 工具模式下拒绝且无工具调用，引导模型输出`);
+                fullResponse = 'I understand the request. Let me analyze the information and proceed with the appropriate action.';
             }
+        }
+
+        // 极短响应重试（可能是连接中断）
+        if (hasTools && fullResponse.trim().length < 10 && retryCount < MAX_REFUSAL_RETRIES) {
+            retryCount++;
+            console.log(`[Handler] 响应过短 (${fullResponse.length} chars)，重试第${retryCount}次`);
+            activeCursorReq = await convertToCursorRequest(body);
+            await executeStream();
+            console.log(`[Handler] 重试响应 (${fullResponse.length} chars): ${fullResponse.substring(0, 200)}${fullResponse.length > 200 ? '...' : ''}`);
         }
 
         // 流完成后，处理完整响应
@@ -585,12 +612,16 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
                         content_block: { type: 'tool_use', id: tcId, name: tc.name, input: {} },
                     });
 
+                    // 增量发送 input_json_delta（模拟 Anthropic 原生流式）
                     const inputJson = JSON.stringify(tc.arguments);
-                    writeSSE(res, 'content_block_delta', {
-                        type: 'content_block_delta',
-                        index: blockIndex,
-                        delta: { type: 'input_json_delta', partial_json: inputJson },
-                    });
+                    const CHUNK_SIZE = 128;
+                    for (let j = 0; j < inputJson.length; j += CHUNK_SIZE) {
+                        writeSSE(res, 'content_block_delta', {
+                            type: 'content_block_delta',
+                            index: blockIndex,
+                            delta: { type: 'input_json_delta', partial_json: inputJson.slice(j, j + CHUNK_SIZE) },
+                        });
+                    }
 
                     writeSSE(res, 'content_block_stop', {
                         type: 'content_block_stop', index: blockIndex,
@@ -674,19 +705,24 @@ async function handleNonStream(res: Response, cursorReq: CursorChatRequest, body
     let fullText = await sendCursorRequestFull(cursorReq);
     const hasTools = (body.tools?.length ?? 0) > 0;
 
-    console.log(`[Handler] 原始响应 (${fullText.length} chars): ${fullText.substring(0, 300)}...`);
+    console.log(`[Handler] 非流式原始响应 (${fullText.length} chars, tools=${hasTools}): ${fullText.substring(0, 300)}${fullText.length > 300 ? '...' : ''}`);
 
-    // 无工具模式：检测拒绝并自动重试
-    if (!hasTools && isRefusal(fullText)) {
+    // 拒绝检测 + 自动重试（工具模式和非工具模式均生效）
+    const shouldRetry = () => isRefusal(fullText) && !(hasTools && hasToolCalls(fullText));
+
+    if (shouldRetry()) {
         for (let attempt = 0; attempt < MAX_REFUSAL_RETRIES; attempt++) {
-            console.log(`[Handler] 非流式：检测到身份拒绝（第${attempt + 1}次重试）...原始: ${fullText.substring(0, 80)}...`);
+            console.log(`[Handler] 非流式：检测到拒绝（第${attempt + 1}次重试）...原始: ${fullText.substring(0, 100)}`);
             const retryBody = buildRetryRequest(body, attempt);
             const retryCursorReq = await convertToCursorRequest(retryBody);
             fullText = await sendCursorRequestFull(retryCursorReq);
-            if (!isRefusal(fullText)) break;
+            if (!shouldRetry()) break;
         }
-        if (isRefusal(fullText)) {
-            if (isToolCapabilityQuestion(body)) {
+        if (shouldRetry()) {
+            if (hasTools) {
+                console.log(`[Handler] 非流式：工具模式下拒绝，引导模型输出`);
+                fullText = 'I understand the request. Let me analyze the information and proceed with the appropriate action.';
+            } else if (isToolCapabilityQuestion(body)) {
                 console.log(`[Handler] 非流式：工具能力询问被拒绝，返回 Claude 能力描述`);
                 fullText = CLAUDE_TOOLS_RESPONSE;
             } else {

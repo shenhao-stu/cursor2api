@@ -1,6 +1,6 @@
 {
   "name": "cursor2api",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "Proxy Cursor docs AI to Anthropic Messages API for Claude Code",
   "type": "module",
   "scripts": {
@@ -8,6 +8,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test:unit": "node test/unit-tolerant-parse.mjs",
+    "test:tool-fixer": "node test/unit-tool-fixer.mjs",
+    "test:openai-compat": "node test/unit-openai-compat.mjs",
+    "test:all": "node test/unit-tolerant-parse.mjs && node test/unit-tool-fixer.mjs && node test/unit-openai-compat.mjs",
     "test:e2e": "node test/e2e-chat.mjs",
     "test:agentic": "node test/e2e-agentic.mjs"
   },

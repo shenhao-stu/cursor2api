@@ -1,6 +1,6 @@
 # Cursor2API v2
 
-将 Cursor 文档页免费 AI 对话接口代理转换为 **Anthropic Messages API**，目前仅在 **Claude Code** 中效果明显。
+将 Cursor 文档页免费 AI 对话接口代理转换为 **Anthropic Messages API** 和 **OpenAI Chat Completions API**，支持 **Claude Code** 和 **Cursor IDE** 使用。
 
 ## 原理
 
@@ -10,26 +10,30 @@
 │ (Anthropic)  │     │  cursor2api  │     │  Cursor API  │
 │              │◀────│  (代理+转换)  │◀────│  /api/chat   │
 └─────────────┘     └──────────────┘     └──────────────┘
+       ▲                    ▲
+       │                    │
+┌──────┴──────┐     ┌──────┴──────┐
+│  Cursor IDE  │     │ OpenAI 兼容  │
+│(/v1/responses│     │(/v1/chat/   │
+│ + Agent模式) │     │ completions)│
+└─────────────┘     └─────────────┘
 ```
-
-1. Claude Code 发送标准 Anthropic Messages API 请求（带工具定义）
-2. cursor2api 将工具定义**注入为提示词**（JSON 格式 + Cursor IDE 场景融合）
-3. 将消息转换为 Cursor `/api/chat` 格式，带 Chrome TLS 指纹模拟
-4. Cursor 背后的 Claude Sonnet 4.6 按照提示词输出工具调用
-5. cursor2api 解析 JSON 工具调用 → 转换为 Anthropic `tool_use` 格式返回
-6. Claude Code 执行工具 → 发送 `tool_result` → 循环
 
 ## 核心特性
 
 - **Anthropic Messages API 完整兼容** - `/v1/messages` 流式/非流式，直接对接 Claude Code
+- **OpenAI Chat Completions API 兼容** - `/v1/chat/completions`，对接 ChatBox / LobeChat 等客户端
+- **Cursor IDE Agent 模式适配** - `/v1/responses` 端点 + 扁平工具格式 + 增量流式工具调用
+- **工具参数自动修复** - 字段名映射 (`file_path` → `path`)、智能引号替换、模糊匹配修复
 - **多模态视觉降级处理** - 内置纯本地 CPU OCR 图片文字提取（零配置免 Key），或支持外接第三方免费视觉大模型 API 解释图片
 - **Cursor IDE 场景融合提示词注入** - 不覆盖模型身份，顺应 Cursor 内部角色设定
 - **全工具支持** - 无工具白名单限制，支持所有 MCP 工具和自定义扩展
-- **多层拒绝拦截** - 自动检测和抑制 Cursor 文档助手的拒绝行为
+- **多层拒绝拦截** - 自动检测和抑制 Cursor 文档助手的拒绝行为（工具和非工具模式均生效）
 - **三层身份保护** - 身份探针拦截 + 拒绝重试 + 响应清洗，确保输出永远呈现 Claude 身份
+- **连续同角色消息自动合并** - 满足 Anthropic API 交替要求，解决 Cursor IDE 发送格式兼容问题
 - **上下文清洗** - 自动清理历史对话中的权限拒绝和错误记忆
 - **Chrome TLS 指纹** - 模拟真实浏览器请求头
-- **SSE 流式传输** - 实时响应
+- **SSE 流式传输** - 实时响应，工具参数 128 字节增量分块
 
 ## 快速开始
 
@@ -60,19 +64,36 @@ export ANTHROPIC_BASE_URL=http://localhost:3010
 claude
 ```
 
-> ⚠️ **注意**：目前仅在 Claude Code 中验证效果明显，其他客户端暂未充分测试。
+### 5. 配合 Cursor IDE 使用
+
+在 Cursor IDE 的设置中配置：
+```
+OPENAI_BASE_URL=http://localhost:3010/v1
+```
+模型选择 `claude-sonnet-4-20250514` 或其他列出的 Claude 模型名。
+
+> ⚠️ **注意**：Cursor IDE 请优先选用 Claude 模型名（通过 `/v1/models` 查看），避免使用 GPT 模型名以获得最佳兼容。
 
 ## 项目结构
 
 ```
 cursor2api/
 ├── src/
-│   ├── index.ts            # 入口 + Express 服务
+│   ├── index.ts            # 入口 + Express 服务 + 路由
 │   ├── config.ts           # 配置管理
 │   ├── types.ts            # 类型定义
 │   ├── cursor-client.ts    # Cursor API 客户端 + Chrome TLS 指纹
 │   ├── converter.ts        # 协议转换 + 提示词注入 + 上下文清洗
-│   └── handler.ts          # Anthropic API 处理器 + 身份保护 + 拒绝拦截
+│   ├── handler.ts          # Anthropic API 处理器 + 身份保护 + 拒绝拦截
+│   ├── openai-handler.ts   # OpenAI / Cursor IDE 兼容处理器
+│   ├── openai-types.ts     # OpenAI 类型定义
+│   └── tool-fixer.ts       # 工具参数自动修复（字段映射 + 智能引号 + 模糊匹配）
+├── test/
+│   ├── unit-tolerant-parse.mjs  # tolerantParse / parseToolCalls 单元测试
+│   ├── unit-tool-fixer.mjs      # tool-fixer 单元测试
+│   ├── unit-openai-compat.mjs   # OpenAI 兼容性单元测试
+│   ├── e2e-chat.mjs             # 端到端对话测试
+│   └── e2e-agentic.mjs          # Claude Code Agentic 压测
 ├── config.yaml             # 配置文件
 ├── package.json
 └── tsconfig.json
@@ -129,7 +150,30 @@ AI 按此格式输出 → 我们解析并转换为标准的 Anthropic `tool_use`
 
 ## 更新日志
 
-### v2.4.0 (2026-03-10) — 流式稳定性 + tool_choice 强制工具调用 + 完整测试套件
+### v2.5.0 (2026-03-10) — Cursor IDE 适配 + 工具参数修复 + 增量流式
+
+**🖥️ Cursor IDE 完整适配**
+- ✨ 新增 `/v1/responses` 端点：支持 Cursor IDE Agent 模式（Responses API → Chat Completions 自动转换）
+- ✨ 兼容 Cursor 扁平工具格式 `{ name, input_schema }` 和标准 OpenAI `{ type: "function", function: {...} }` 格式
+- ✨ 扩展 `/v1/models` 模型列表：新增 `claude-sonnet-4-5-20250929`、`claude-sonnet-4-20250514`、`claude-3-5-sonnet-20241022`
+- ✨ 连续同角色消息自动合并（`mergeConsecutiveRoles`），满足 Anthropic API 角色交替要求
+- ✨ content 数组中 `tool_use` / `tool_result` 块直接透传
+
+**🔧 工具参数自动修复 (`tool-fixer.ts`)**
+- ✨ `normalizeToolArguments`：自动映射 `file_path` → `path` 等常见错误字段名
+- ✨ `replaceSmartQuotes`：替换中文/法文智能引号为 ASCII 标准引号
+- ✨ `repairExactMatchToolArguments`：`StrReplace`/`search_replace` 精确匹配失败时自动模糊匹配修复
+- ✨ 自然语言 `tool_result` 转换（`extractToolResultNatural`），提高 Cursor IDE 兼容性
+
+**🚀 流式增量优化**
+- ✨ Anthropic handler：`input_json_delta` 按 128 字节分块增量发送
+- ✨ OpenAI handler：`tool_calls` 先发 name+id（空 arguments），再分块发送 arguments
+- ✨ 拒绝重试扩展到工具模式：检测拒绝且无工具调用时自动重试
+- ✨ 极短响应重试：工具模式下响应 < 10 字符时自动重试（防止连接中断）
+
+**🧪 新增测试**
+- ✨ `test/unit-tool-fixer.mjs`：19 个测试覆盖字段映射、引号替换、综合修复
+- ✨ `test/unit-openai-compat.mjs`：25 个测试覆盖 Responses API 转换、消息合并、扁平工具格式、增量分块
 
 **🔧 Bug 修复**
 - ✨ `cursor-client.ts`：固定总超时 → 空闲超时，每收到数据 chunk 重置计时，彻底解决长输出中断问题（[#12](https://github.com/7836246/cursor2api/issues/12)）
