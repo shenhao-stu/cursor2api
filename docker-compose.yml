@@ -1,0 +1,26 @@
+services:
+  cursor2api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cursor2api:latest
+    container_name: cursor2api
+    restart: unless-stopped
+    ports:
+      - "3010:3010"
+    volumes:
+      # 挂载外部配置文件（推荐）——修改后只需 docker compose restart 即可生效
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - NODE_ENV=production
+      - PORT=3010
+      - TIMEOUT=120
+      # ⚠️ 部署到海外机器无需代理，如果在国内云，取消注释并填入你的本机 http/socks 代理
+      # - PROXY=http://host.docker.internal:7890
+
+      # [可选环境变量] 以下变量如果声明，将会覆盖 config.yaml 中对应的配置：
+      # - CURSOR_MODEL=anthropic/claude-sonnet-4.6
+
+      # ── Vision 图片处理（v2.3.0 新增） ──
+      # 默认使用本地 OCR（零配置），如需外部 Vision API 请在 config.yaml 中修改 vision.mode 为 'api'
+      # 并配置 vision.base_url / vision.api_key / vision.model

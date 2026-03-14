@@ -1,0 +1,56 @@
+# Cursor2API v2 配置文件
+
+# 服务端口
+port: 3010
+
+# 请求超时（秒）
+timeout: 120
+
+# 代理设置（可选）
+# ⚠️ Node.js fetch 不读取 HTTP_PROXY / HTTPS_PROXY 环境变量，
+#    必须在此处或通过 PROXY 环境变量显式配置代理。
+# 支持 http 代理，含认证格式: http://用户名:密码@代理地址:端口
+# proxy: "http://127.0.0.1:7890"
+
+# Cursor 使用的模型
+cursor_model: "anthropic/claude-sonnet-4.6"
+
+# 浏览器指纹配置
+fingerprint:
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+
+# 视觉处理降级配置（可选）
+# 如果开启，可以拦截您发给大模型的图片进行降级处理（因为目前免费 Cursor 不支持视觉）。
+vision:
+  enabled: true
+  # mode 选项: 'ocr' 或 'api'
+  # 'ocr': [默认模式] 彻底免 Key，零配置，完全依赖本机的 CPU 识图，提取文本、报错日志、代码段后发给大模型。
+  # 'api': 需要配置下方的 providers，把图发给外部视觉模型（如 Gemini、OpenRouter），能"看到"画面内容和色彩。
+  mode: 'ocr'
+
+  # ---------- 以下选项仅在 mode: 'api' 时才生效 ----------
+
+  # 是否在所有 API 都失败时兜底使用本地 OCR（默认: true）
+  # fallback_to_ocr: true
+
+  # API 提供者列表（按顺序尝试，第一个成功即返回，失败则自动尝试下一个）
+  # providers:
+  #   - name: "openrouter-free"        # 名称（仅用于日志显示）
+  #     base_url: "https://openrouter.ai/api/v1/chat/completions"
+  #     api_key: "sk-or-v1-..."
+  #     model: "meta-llama/llama-3.2-11b-vision-instruct:free"
+  #
+  #   - name: "gemini-backup"
+  #     base_url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+  #     api_key: "AIza..."
+  #     model: "gemini-2.0-flash"
+  #
+  #   - name: "openai-premium"
+  #     base_url: "https://api.openai.com/v1/chat/completions"
+  #     api_key: "sk-..."
+  #     model: "gpt-4o-mini"
+
+  # ---------- 兼容旧版单 API 写法（不推荐，建议改用 providers） ----------
+  # base_url: "https://openrouter.ai/api/v1/chat/completions"
+  # api_key: "sk-or-v1-..."
+  # model: "meta-llama/llama-3.2-11b-vision-instruct:free"

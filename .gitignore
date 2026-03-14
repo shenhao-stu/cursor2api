@@ -1,0 +1,41 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+cursor2api
+
+# Go
+vendor/
+*.test
+
+# Node
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Environment
+.env
+.env.local
+
+# Build
+dist/
+build/
+*.traineddata
+
+# Debug / temp files
+debug_payload.js
+last_payload.json
+*.debug.json
