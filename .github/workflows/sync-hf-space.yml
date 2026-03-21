@@ -2,8 +2,8 @@ name: Sync upstream and deploy to HuggingFace Space
 
 on:
   schedule:
-    # Check upstream every 6 hours
-    - cron: '17 */6 * * *'
+    # Check upstream every 2 days
+    - cron: '23 3 */2 * *'
   workflow_dispatch:
 
 jobs:
@@ -29,11 +29,43 @@ jobs:
           git reset --hard upstream/main
           git push origin main --force
 
+      - name: Prepare minimal HF Space deployment
+        run: |
+          # Remove non-essential files for HF Space
+          rm -rf test/ vue-ui/ refs/ .cursor/ .github/ .vscode/ .idea/
+          rm -f deploy.sh docker-compose.yml config.yaml.example CHANGELOG.md LICENSE
+          rm -f *.zip *.tar.gz *.log
+
+          # Extract version from package.json
+          VERSION=$(node -p "require('./package.json').version")
+
+          # Create HF Space README with proper frontmatter
+          cat > README.md << 'HFEOF'
+          ---
+          title: Cursor2API
+          emoji: 🔀
+          colorFrom: blue
+          colorTo: indigo
+          sdk: docker
+          app_port: 3010
+          license: mit
+          ---
+
+          # Cursor2API
+
+          Cursor Docs AI → Anthropic & OpenAI API Proxy
+
+          Auto-synced from [7836246/cursor2api](https://github.com/7836246/cursor2api)
+          HFEOF
+          # Remove leading spaces from heredoc
+          sed -i 's/^          //' README.md
+
       - name: Deploy to HuggingFace Space (orphan push)
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           git checkout --orphan hf-deploy
+          git add -A
           git commit -m "sync: upstream $(git log upstream/main -1 --format='%h %s')"
           git remote add huggingface https://ohmyapi:${HF_TOKEN}@huggingface.co/spaces/ohmyapi/cursor2api || true
           git push huggingface hf-deploy:main --force
