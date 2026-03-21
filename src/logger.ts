@@ -114,6 +114,8 @@ export interface RequestSummary {
     phaseTimings: PhaseTiming[];
     thinkingChars: number;
     systemPromptLength: number;
+    inputTokens?: number;   // 请求发出时的估算输入 token 数（js-tiktoken）
+    outputTokens?: number;  // 响应完成后的估算输出 token 数（js-tiktoken）
     /** 用户提问标题（截取最后一个 user 消息的前 80 字符） */
     title?: string;
 }

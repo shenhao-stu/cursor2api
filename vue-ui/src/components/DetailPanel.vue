@@ -21,6 +21,8 @@
           <span class="sbadge sm-badge"><span class="sm-l">格式</span><b :class="'fmt-' + curReq.apiFormat">{{ curReq.apiFormat.toUpperCase() }}</b></span>
           <span class="sbadge sm-badge"><span class="sm-l">消息数</span><b>{{ curReq.messageCount }}</b></span>
           <span class="sbadge sm-badge"><span class="sm-l">响应</span><b>{{ fmtN(curReq.responseChars) }}</b>chars</span>
+          <span v-if="curReq.inputTokens" class="sbadge sm-badge"><span class="sm-l">↑ Cursor tokens</span><b>{{ fmtN(curReq.inputTokens) }}</b></span>
+          <span v-if="curReq.outputTokens" class="sbadge sm-badge"><span class="sm-l">↓ Cursor tokens</span><b>{{ fmtN(curReq.outputTokens) }}</b></span>
           <!-- <span v-if="curReq.toolCount > 0" class="sbadge sm-badge"><span class="sm-l">工具定义</span><b>{{ curReq.toolCount }}</b>个</span> -->
           <span v-if="curReq.toolCallsDetected > 0" class="sbadge sm-badge"><span class="sm-l">工具调用</span><b>{{ curReq.toolCallsDetected }}</b>次</span>
           <span v-if="curReq.thinkingChars > 0" class="sbadge sm-badge"><span class="sm-l">Thinking</span><b>{{ fmtN(curReq.thinkingChars) }}</b>chars</span>

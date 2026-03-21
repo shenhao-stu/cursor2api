@@ -20,6 +20,7 @@ import { convertToCursorRequest, parseToolCalls, hasToolCalls } from './converte
 import { sendCursorRequest, sendCursorRequestFull } from './cursor-client.js';
 import { getConfig } from './config.js';
 import { createRequestLogger, type RequestLogger } from './logger.js';
+import { estimateTokens } from './tokenizer.js';
 import { createIncrementalTextStreamer, hasLeadingThinking, splitLeadingThinkingBlocks, stripThinkingTags } from './streaming-text.js';
 
 function msgId(): string {
@@ -97,26 +98,27 @@ export function listModels(_req: Request, res: Response): void {
 // ==================== Token 计数 ====================
 
 export function estimateInputTokens(body: AnthropicRequest): number {
-    let totalChars = 0;
+    let total = 0;
 
     if (body.system) {
-        totalChars += typeof body.system === 'string' ? body.system.length : JSON.stringify(body.system).length;
+        const sysStr = typeof body.system === 'string' ? body.system : JSON.stringify(body.system);
+        total += estimateTokens(sysStr);
     }
-    
+
     for (const msg of body.messages ?? []) {
-        totalChars += typeof msg.content === 'string' ? msg.content.length : JSON.stringify(msg.content).length;
+        const msgStr = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+        total += estimateTokens(msgStr);
     }
 
     // Tool schemas are heavily compressed by compactSchema in converter.ts.
-    // However, they still consume Cursor's context budget. 
+    // However, they still consume Cursor's context budget.
     // If not counted, Claude CLI will dangerously underestimate context size.
     if (body.tools && body.tools.length > 0) {
-        totalChars += body.tools.length * 200; // ~200 chars per compressed tool signature
-        totalChars += 1000; // Tool use guidelines and behavior instructions
+        total += body.tools.length * 70; // ~200 chars/tool → ~70 tokens after compression
+        total += 350;                    // Tool use guidelines and behavior instructions
     }
-    
-    // Safer estimation for mixed Chinese/English and Code: 1 token ≈ 3 chars + 10% safety margin.
-    return Math.max(1, Math.ceil((totalChars / 3) * 1.1));
+
+    return Math.max(1, total);
 }
 
 export function countTokens(req: Request, res: Response): void {
@@ -803,6 +805,7 @@ async function handleDirectTextStream(
     let finalRawResponse = '';
     let finalVisibleText = '';
     let finalThinkingContent = '';
+    let cursorUsage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
     let streamer = createIncrementalTextStreamer({
         warmupChars: 300,   // ★ 与工具模式对齐：前 300 chars 不释放，确保拒绝检测完成后再流
         transform: sanitizeResponse,
@@ -843,6 +846,10 @@ async function handleDirectTextStream(
         log.startPhase('send', '发送到 Cursor');
 
         await sendCursorRequest(activeCursorReq, (event: CursorSSEEvent) => {
+            if (event.type === 'finish') {
+                if (event.messageMetadata?.usage) cursorUsage = event.messageMetadata.usage;
+                return;
+            }
             if (event.type !== 'text-delta' || !event.delta) return;
 
             if (firstChunk) {
@@ -998,6 +1005,10 @@ async function handleDirectTextStream(
         ? sanitizeResponse(finalVisibleText)
         : finalTextToSend;
     log.recordFinalResponse(finalRecordedResponse);
+    log.updateSummary({
+        inputTokens: cursorUsage?.inputTokens ?? estimateInputTokens(body),
+        outputTokens: cursorUsage?.outputTokens ?? estimateTokens(finalRecordedResponse),
+    });
     log.complete(finalRecordedResponse.length, 'end_turn');
 
     res.end();
@@ -1040,6 +1051,7 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
     let blockIndex = 0;
     let textBlockStarted = false;
     let thinkingBlockEmitted = false;
+    let cursorUsage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
 
     // 无工具模式：先缓冲全部响应再检测拒绝，如果是拒绝则重试
     let activeCursorReq = cursorReq;
@@ -1057,6 +1069,10 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
 
         try {
             await sendCursorRequest(activeCursorReq, (event: CursorSSEEvent) => {
+                if (event.type === 'finish') {
+                    if (event.messageMetadata?.usage) cursorUsage = event.messageMetadata.usage;
+                    return;
+                }
                 if (event.type !== 'text-delta' || !event.delta) return;
                 if (firstChunk) { log.recordTTFT(); log.endPhase(); log.startPhase('response', '接收响应'); firstChunk = false; }
                 fullResponse += event.delta;
@@ -1642,6 +1658,10 @@ Please go ahead and pick the most appropriate tool for the current task and outp
 
         // ★ 记录完成
         log.recordFinalResponse(fullResponse);
+        log.updateSummary({
+            inputTokens: cursorUsage?.inputTokens ?? estimateInputTokens(body),
+            outputTokens: cursorUsage?.outputTokens ?? estimateTokens(fullResponse),
+        });
         log.complete(fullResponse.length, stopReason);
 
     } catch (err: unknown) {
@@ -1963,6 +1983,7 @@ Please go ahead and pick the most appropriate tool for the current task and outp
 
     // ★ 记录完成
     log.recordFinalResponse(fullText);
+    log.updateSummary({ inputTokens: estimateInputTokens(body), outputTokens: estimateTokens(fullText) });
     log.complete(fullText.length, stopReason);
 
     } catch (err: unknown) {

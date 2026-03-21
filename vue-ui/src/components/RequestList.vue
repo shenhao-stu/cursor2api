@@ -60,6 +60,7 @@
           <span class="rid">{{ req.requestId.slice(0, 8) }}</span>
           <span class="rfmt" :class="req.apiFormat">{{ req.apiFormat }}</span>
           <span v-if="req.responseChars" class="rchars">{{ fmtN(req.responseChars) }} chars</span>
+          <span v-if="req.inputTokens" class="rchars">↑{{ fmtN(req.inputTokens) }}↓{{ fmtN(req.outputTokens ?? 0) }} tok</span>
         </div>
         <div class="rbd">
           <span v-if="req.stream" class="bg bg-stream">Stream</span>

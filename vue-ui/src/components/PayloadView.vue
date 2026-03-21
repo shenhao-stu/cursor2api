@@ -47,10 +47,12 @@
         <div class="conv-grid">
           <div class="cg-item"><span class="cg-l">原始工具数</span><span class="cg-v">{{ convSummary.origToolCount }}</span></div>
           <div class="cg-item"><span class="cg-l">Cursor工具数</span><span class="cg-v" style="color:var(--green)">0 <small>(嵌入消息)</small></span></div>
-          <div class="cg-item"><span class="cg-l">工具指令占用</span><span class="cg-v">{{ convSummary.toolInstrChars > 0 ? fmtN(convSummary.toolInstrChars) + ' chars' : convSummary.origToolCount > 0 ? '嵌入#1' : 'N/A' }}</span></div>
+          <div class="cg-item"><span class="cg-l">总上下文</span><span class="cg-v">{{ convSummary.totalChars ? fmtN(convSummary.totalChars) + ' chars' : '—' }}</span></div>
+          <div class="cg-item"><span class="cg-l">↑ Cursor 输入 tokens</span><span class="cg-v" style="color:var(--blue)">{{ curReq?.inputTokens ? fmtN(curReq.inputTokens) : '—' }}</span></div>
           <div class="cg-item"><span class="cg-l">原始消息数</span><span class="cg-v">{{ convSummary.origMsgCount }}</span></div>
           <div class="cg-item"><span class="cg-l">Cursor消息数</span><span class="cg-v" style="color:var(--green)">{{ convSummary.cursorMsgCount }}</span></div>
-          <div class="cg-item"><span class="cg-l">总上下文</span><span class="cg-v">{{ convSummary.totalChars ? fmtN(convSummary.totalChars) + ' chars' : '—' }}</span></div>
+          <div class="cg-item"><span class="cg-l">工具指令占用</span><span class="cg-v">{{ convSummary.toolInstrChars > 0 ? fmtN(convSummary.toolInstrChars) + ' chars' : convSummary.origToolCount > 0 ? '嵌入#1' : 'N/A' }}</span></div>
+          <div class="cg-item"><span class="cg-l">↓ Cursor 输出 tokens</span><span class="cg-v" style="color:var(--green)">{{ curReq?.outputTokens ? fmtN(curReq.outputTokens) : '—' }}</span></div>
         </div>
         <div v-if="convSummary.origToolCount > 0" class="tool-warn">
           ⚠️ Cursor API 不支持原生 tools。{{ convSummary.origToolCount }} 个工具已转为文本指令嵌入 user#1{{ convSummary.toolInstrChars > 0 ? '（约 ' + fmtN(convSummary.toolInstrChars) + ' chars）' : '' }}
@@ -638,7 +640,7 @@ mark.hl {
 
 /* 转换摘要 */
 .conv-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 8px;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px;
 }
 .cg-item {
   display: flex; flex-direction: column; gap: 2px;
