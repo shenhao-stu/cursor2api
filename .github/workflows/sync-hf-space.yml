@@ -1,0 +1,34 @@
+name: Sync upstream and deploy to HuggingFace Space
+
+on:
+  schedule:
+    # Check upstream every 6 hours
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync with upstream
+        run: |
+          git remote add upstream https://github.com/7836246/cursor2api.git || true
+          git fetch upstream main
+          git checkout main
+          git reset --hard upstream/main
+          git push origin main --force
+
+      - name: Deploy to HuggingFace Space (orphan push)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git checkout --orphan hf-deploy
+          git commit -m "sync: upstream $(git log upstream/main -1 --format='%h %s')"
+          git remote add huggingface https://ohmyapi:${HF_TOKEN}@huggingface.co/spaces/ohmyapi/cursor2api || true
+          git push huggingface hf-deploy:main --force
