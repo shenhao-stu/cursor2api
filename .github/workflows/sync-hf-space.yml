@@ -2,7 +2,7 @@ name: Sync upstream and deploy to HuggingFace Space
 
 on:
   schedule:
-    # Check upstream every 2 days
+    # Sync upstream every 2 days
     - cron: '23 3 */2 * *'
   workflow_dispatch:
 
@@ -33,32 +33,32 @@ jobs:
         run: |
           # Remove non-essential files for HF Space
           rm -rf test/ vue-ui/ refs/ .cursor/ .github/ .vscode/ .idea/
-          rm -f deploy.sh docker-compose.yml config.yaml.example CHANGELOG.md LICENSE
+          rm -f deploy.sh docker-compose.yml config.yaml config.yaml.example CHANGELOG.md LICENSE
           rm -f *.zip *.tar.gz *.log
 
           # Extract version from package.json
           VERSION=$(node -p "require('./package.json').version")
 
           # Create HF Space README with proper frontmatter
-          cat > README.md << 'HFEOF'
-          ---
-          title: Cursor2API
-          emoji: 🔀
-          colorFrom: blue
-          colorTo: indigo
-          sdk: docker
-          app_port: 3010
-          license: mit
-          ---
+          cat > README.md <<'EOF'
+---
+title: Cursor2API
+emoji: 🔀
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 3010
+license: mit
+---
 
-          # Cursor2API
+# Cursor2API v${VERSION}
 
-          Cursor Docs AI → Anthropic & OpenAI API Proxy
+Cursor Docs AI → Anthropic & OpenAI API Proxy
 
-          Auto-synced from [7836246/cursor2api](https://github.com/7836246/cursor2api)
-          HFEOF
-          # Remove leading spaces from heredoc
-          sed -i 's/^          //' README.md
+Auto-synced from [7836246/cursor2api](https://github.com/7836246/cursor2api)
+EOF
+          # Interpolate version
+          sed -i "s/\${VERSION}/$VERSION/" README.md
 
       - name: Deploy to HuggingFace Space (orphan push)
         env:

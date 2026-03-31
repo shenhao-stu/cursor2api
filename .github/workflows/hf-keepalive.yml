@@ -1,0 +1,25 @@
+name: HuggingFace Space Keepalive
+
+on:
+  schedule:
+    # Ping every 14 minutes — HF sleeps after ~15min of inactivity (free tier)
+    - cron: '*/14 * * * *'
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping HF Space health endpoint
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 30 \
+            "https://ohmyapi-cursor2api.hf.space/health")
+          echo "Health check response: $HTTP_CODE"
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "::warning::Space unreachable (timeout/DNS) — may be sleeping or rebuilding"
+          elif [ "$HTTP_CODE" != "200" ]; then
+            echo "::warning::Unexpected status $HTTP_CODE"
+          else
+            echo "Space is alive"
+          fi
