@@ -80,19 +80,123 @@ export function extractThinking(text: string): { thinkingContent: string; stripp
 
 // ==================== 模型列表 ====================
 
+/**
+ * 内置已知可用模型列表。
+ * - cursor web 免费助手当前仅支持 gemini-3-flash
+ * - anthropic/claude-sonnet-4.6 保留用于 IDE 付费场景
+ *
+ * 可通过 CURSOR_MODELS 环境变量覆盖：逗号分隔的模型 ID 列表
+ * 例如: CURSOR_MODELS="gemini-3-flash,anthropic/claude-sonnet-4.6,gpt-4o-mini"
+ */
+const BUILTIN_MODELS: { id: string; owned_by: string }[] = [
+    { id: 'gemini-3-flash', owned_by: 'google' },
+    { id: 'anthropic/claude-sonnet-4.6', owned_by: 'anthropic' },
+];
+
+function getModelOwner(id: string): string {
+    if (id.includes('claude') || id.includes('anthropic')) return 'anthropic';
+    if (id.includes('gemini')) return 'google';
+    if (id.includes('gpt') || id.includes('o1') || id.includes('o3')) return 'openai';
+    if (id.includes('grok')) return 'xai';
+    if (id.includes('deepseek')) return 'deepseek';
+    return 'cursor';
+}
+
+function getAdvertisedModels(): { id: string; owned_by: string }[] {
+    const envModels = process.env.CURSOR_MODELS;
+    if (envModels) {
+        return envModels.split(',').map((s: string) => s.trim()).filter(Boolean).map((id: string) => ({
+            id,
+            owned_by: getModelOwner(id),
+        }));
+    }
+
+    const activeModel = getConfig().cursorModel;
+    const seen = new Set<string>();
+    const result: { id: string; owned_by: string }[] = [];
+
+    // 当前活跃模型排第一
+    seen.add(activeModel);
+    result.push({ id: activeModel, owned_by: getModelOwner(activeModel) });
+
+    // 追加内置模型（去重）
+    for (const m of BUILTIN_MODELS) {
+        if (!seen.has(m.id)) {
+            seen.add(m.id);
+            result.push(m);
+        }
+    }
+    return result;
+}
+
+/** 模型探测缓存：成功的模型 → 时间戳 */
+const probeCache = new Map<string, number>();
+const PROBE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24h
+
+/**
+ * 探测一个模型是否可用：向 Cursor API 发送一个极简请求
+ */
+export async function probeModel(modelId: string): Promise<boolean> {
+    const cached = probeCache.get(modelId);
+    if (cached && Date.now() - cached < PROBE_CACHE_TTL) return true;
+
+    try {
+        const testReq: CursorChatRequest = {
+            model: modelId,
+            id: uuidv4(),
+            messages: [{ role: 'user', parts: [{ type: 'text', text: 'hi' }], id: uuidv4() }],
+            trigger: 'submit-message',
+        };
+        let gotResponse = false;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15_000);
+        try {
+            await sendCursorRequest(testReq, (ev) => {
+                if (ev.type === 'text') {
+                    gotResponse = true;
+                    controller.abort(); // got a response, stop early
+                }
+            }, controller.signal);
+        } finally {
+            clearTimeout(timer);
+        }
+        if (gotResponse) {
+            probeCache.set(modelId, Date.now());
+            return true;
+        }
+    } catch (e) {
+        console.log(`[Models] probe ${modelId} failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return false;
+}
+
+/**
+ * GET /v1/models — 返回可用模型列表
+ */
 export function listModels(_req: Request, res: Response): void {
-    const model = getConfig().cursorModel;
     const now = Math.floor(Date.now() / 1000);
+    const models = getAdvertisedModels();
     res.json({
         object: 'list',
-        data: [
-            { id: model, object: 'model', created: now, owned_by: 'anthropic' },
-            // Cursor IDE 推荐使用以下 Claude 模型名（避免走 /v1/responses 格式）
-            { id: 'claude-sonnet-4-5-20250929', object: 'model', created: now, owned_by: 'anthropic' },
-            { id: 'claude-sonnet-4-20250514', object: 'model', created: now, owned_by: 'anthropic' },
-            { id: 'claude-3-5-sonnet-20241022', object: 'model', created: now, owned_by: 'anthropic' },
-        ],
+        data: models.map(m => ({ id: m.id, object: 'model', created: now, owned_by: m.owned_by })),
     });
+}
+
+/**
+ * POST /v1/models/refresh — 探测候选模型可用性并返回结果
+ * Body 可选: { "candidates": ["model-a", "model-b"] }
+ * 不传则探测内置 + 环境变量中的所有模型
+ */
+export async function refreshModels(req: Request, res: Response): Promise<void> {
+    const rawCandidates = req.body?.candidates;
+    const candidates: string[] = Array.isArray(rawCandidates) && rawCandidates.every((c: unknown) => typeof c === 'string')
+        ? rawCandidates
+        : getAdvertisedModels().map(m => m.id);
+
+    const results = await Promise.all(
+        candidates.map(async (id) => ({ id, available: await probeModel(id) }))
+    );
+    res.json({ object: 'model_probe', results, probed_at: new Date().toISOString() });
 }
 
 // ==================== Token 计数 ====================
@@ -316,7 +420,7 @@ async function handleMockIdentityStream(res: Response, body: AnthropicRequest): 
     const id = msgId();
     const mockText = "I am Claude, an advanced AI programming assistant created by Anthropic. I am ready to help you write code, debug, and answer your technical questions. Please let me know what we should work on!";
 
-    writeSSE(res, 'message_start', { type: 'message_start', message: { id, type: 'message', role: 'assistant', content: [], model: body.model || 'claude-3-5-sonnet-20241022', stop_reason: null, stop_sequence: null, usage: { input_tokens: 15, output_tokens: 0 } } });
+    writeSSE(res, 'message_start', { type: 'message_start', message: { id, type: 'message', role: 'assistant', content: [], model: body.model || getConfig().cursorModel, stop_reason: null, stop_sequence: null, usage: { input_tokens: 15, output_tokens: 0 } } });
     writeSSE(res, 'content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
     writeSSE(res, 'content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: mockText } });
     writeSSE(res, 'content_block_stop', { type: 'content_block_stop', index: 0 });
@@ -332,7 +436,7 @@ async function handleMockIdentityNonStream(res: Response, body: AnthropicRequest
         type: 'message',
         role: 'assistant',
         content: [{ type: 'text', text: mockText }],
-        model: body.model || 'claude-3-5-sonnet-20241022',
+        model: body.model || getConfig().cursorModel,
         stop_reason: 'end_turn',
         stop_sequence: null,
         usage: { input_tokens: 15, output_tokens: 35 }

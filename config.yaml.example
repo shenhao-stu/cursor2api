@@ -30,7 +30,7 @@ timeout: 120
 # proxy: "http://127.0.0.1:7890"
 
 # Cursor 使用的模型
-cursor_model: "anthropic/claude-sonnet-4.6"
+cursor_model: "gemini-3-flash"
 
 # ==================== 自动续写配置 ====================
 # 当模型输出被截断时，自动发起续写请求的最大次数

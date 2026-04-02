@@ -222,7 +222,7 @@ function defaultConfig(): AppConfig {
     return {
         port: 3010,
         timeout: 120,
-        cursorModel: 'anthropic/claude-sonnet-4.6',
+        cursorModel: 'gemini-3-flash',
         maxAutoContinue: 0,
         maxHistoryMessages: -1,
         maxHistoryTokens: 150000,

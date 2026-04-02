@@ -9,7 +9,7 @@ import 'dotenv/config';
 import { createRequire } from 'module';
 import express from 'express';
 import { getConfig, initConfigWatcher, stopConfigWatcher } from './config.js';
-import { handleMessages, listModels, countTokens } from './handler.js';
+import { handleMessages, listModels, countTokens, refreshModels } from './handler.js';
 import { handleOpenAIChatCompletions, handleOpenAIResponses } from './openai-handler.js';
 import { serveLogViewer, apiGetLogs, apiGetRequests, apiGetStats, apiGetVueStats, apiGetPayload, apiLogsStream, serveLogViewerLogin, apiClearLogs, serveVueApp, apiGetRequestsMore } from './log-viewer.js';
 import { apiGetConfig, apiSaveConfig } from './config-api.js';
@@ -124,6 +124,9 @@ app.post('/messages/count_tokens', countTokens);
 // OpenAI 兼容模型列表
 app.get('/v1/models', listModels);
 
+// 模型探测（刷新可用性）
+app.post('/v1/models/refresh', refreshModels);
+
 // 健康检查
 app.get('/health', (_req, res) => {
     res.json({ status: 'ok', version: VERSION });
@@ -140,6 +143,7 @@ app.get('/', (_req, res) => {
             openai_chat: 'POST /v1/chat/completions',
             openai_responses: 'POST /v1/responses',
             models: 'GET /v1/models',
+            models_refresh: 'POST /v1/models/refresh',
             health: 'GET /health',
             log_viewer: 'GET /logs',
             log_viewer_vue: 'GET /vuelogs',
