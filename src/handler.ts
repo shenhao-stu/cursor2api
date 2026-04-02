@@ -81,16 +81,16 @@ export function extractThinking(text: string): { thinkingContent: string; stripp
 // ==================== 模型列表 ====================
 
 /**
- * 内置已知可用模型列表。
- * - cursor web 免费助手当前仅支持 gemini-3-flash
- * - anthropic/claude-sonnet-4.6 保留用于 IDE 付费场景
- *
- * 可通过 CURSOR_MODELS 环境变量覆盖：逗号分隔的模型 ID 列表
- * 例如: CURSOR_MODELS="gemini-3-flash,anthropic/claude-sonnet-4.6,gpt-4o-mini"
+ * 候选模型列表（按优先级排列）。
+ * 启动时自动探测，第一个可用的模型会被设为当前活跃模型。
+ * 可通过 CURSOR_MODELS 环境变量覆盖：逗号分隔的模型 ID 列表。
  */
-const BUILTIN_MODELS: { id: string; owned_by: string }[] = [
-    { id: 'gemini-3-flash', owned_by: 'google' },
-    { id: 'anthropic/claude-sonnet-4.6', owned_by: 'anthropic' },
+const DEFAULT_CANDIDATES = [
+    'gemini-3-flash',
+    'anthropic/claude-sonnet-4.6',
+    'claude-3.5-sonnet',
+    'gpt-4o-mini',
+    'cursor-small',
 ];
 
 function getModelOwner(id: string): string {
@@ -102,28 +102,26 @@ function getModelOwner(id: string): string {
     return 'cursor';
 }
 
-function getAdvertisedModels(): { id: string; owned_by: string }[] {
+/** 运行时已验证可用的模型列表（启动探测后填充） */
+let verifiedModels: string[] = [];
+
+function getCandidateModels(): string[] {
     const envModels = process.env.CURSOR_MODELS;
     if (envModels) {
-        return envModels.split(',').map((s: string) => s.trim()).filter(Boolean).map((id: string) => ({
-            id,
-            owned_by: getModelOwner(id),
-        }));
+        return envModels.split(',').map((s: string) => s.trim()).filter(Boolean);
     }
+    return DEFAULT_CANDIDATES;
+}
 
-    const activeModel = getConfig().cursorModel;
+function getAdvertisedModels(): { id: string; owned_by: string }[] {
+    // 如果已探测完成，返回已验证的模型
+    const models = verifiedModels.length > 0 ? verifiedModels : [getConfig().cursorModel];
     const seen = new Set<string>();
     const result: { id: string; owned_by: string }[] = [];
-
-    // 当前活跃模型排第一
-    seen.add(activeModel);
-    result.push({ id: activeModel, owned_by: getModelOwner(activeModel) });
-
-    // 追加内置模型（去重）
-    for (const m of BUILTIN_MODELS) {
-        if (!seen.has(m.id)) {
-            seen.add(m.id);
-            result.push(m);
+    for (const id of models) {
+        if (!seen.has(id)) {
+            seen.add(id);
+            result.push({ id, owned_by: getModelOwner(id) });
         }
     }
     return result;
@@ -165,9 +163,45 @@ export async function probeModel(modelId: string): Promise<boolean> {
             return true;
         }
     } catch (e) {
-        console.log(`[Models] probe ${modelId} failed: ${e instanceof Error ? e.message : String(e)}`);
+        // AbortError is expected when we abort after getting a response
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!msg.includes('abort')) {
+            console.log(`[Models] probe ${modelId} failed: ${msg}`);
+        }
     }
-    return false;
+    // If we cached before abort, it's available
+    return probeCache.has(modelId);
+}
+
+/**
+ * 启动时自动探测所有候选模型，填充 verifiedModels 并自动切换 cursorModel。
+ * 在 app.listen 回调中调用。
+ */
+export async function autoProbeModels(): Promise<void> {
+    const candidates = getCandidateModels();
+    console.log(`[Models] 开始探测 ${candidates.length} 个候选模型: ${candidates.join(', ')}`);
+
+    const available: string[] = [];
+    for (const id of candidates) {
+        const ok = await probeModel(id);
+        console.log(`[Models]   ${ok ? '✓' : '✗'} ${id}`);
+        if (ok) available.push(id);
+    }
+
+    if (available.length > 0) {
+        verifiedModels = available;
+        const config = getConfig();
+        if (!available.includes(config.cursorModel)) {
+            // 当前配置的模型不可用，自动切换到第一个可用模型
+            const newModel = available[0];
+            console.log(`[Models] 当前模型 ${config.cursorModel} 不可用，自动切换到 ${newModel}`);
+            config.cursorModel = newModel;
+        }
+        console.log(`[Models] 可用模型: ${available.join(', ')} (活跃: ${config.cursorModel})`);
+    } else {
+        console.log(`[Models] 警告: 所有候选模型均不可用，保持当前配置 ${getConfig().cursorModel}`);
+        verifiedModels = [getConfig().cursorModel];
+    }
 }
 
 /**
@@ -183,20 +217,42 @@ export function listModels(_req: Request, res: Response): void {
 }
 
 /**
- * POST /v1/models/refresh — 探测候选模型可用性并返回结果
+ * POST /v1/models/refresh — 重新探测候选模型可用性，自动更新活跃模型
  * Body 可选: { "candidates": ["model-a", "model-b"] }
- * 不传则探测内置 + 环境变量中的所有模型
  */
 export async function refreshModels(req: Request, res: Response): Promise<void> {
+    // 清空缓存以强制重新探测
+    probeCache.clear();
+
     const rawCandidates = req.body?.candidates;
     const candidates: string[] = Array.isArray(rawCandidates) && rawCandidates.every((c: unknown) => typeof c === 'string')
         ? rawCandidates
-        : getAdvertisedModels().map(m => m.id);
+        : getCandidateModels();
 
-    const results = await Promise.all(
-        candidates.map(async (id) => ({ id, available: await probeModel(id) }))
-    );
-    res.json({ object: 'model_probe', results, probed_at: new Date().toISOString() });
+    const results: { id: string; available: boolean }[] = [];
+    const newVerified: string[] = [];
+    for (const id of candidates) {
+        const available = await probeModel(id);
+        results.push({ id, available });
+        if (available) newVerified.push(id);
+    }
+
+    if (newVerified.length > 0) {
+        verifiedModels = newVerified;
+        const config = getConfig();
+        if (!newVerified.includes(config.cursorModel)) {
+            const oldModel = config.cursorModel;
+            config.cursorModel = newVerified[0];
+            console.log(`[Models] refresh: 切换活跃模型 ${oldModel} → ${config.cursorModel}`);
+        }
+    }
+
+    res.json({
+        object: 'model_probe',
+        active_model: getConfig().cursorModel,
+        results,
+        probed_at: new Date().toISOString(),
+    });
 }
 
 // ==================== Token 计数 ====================

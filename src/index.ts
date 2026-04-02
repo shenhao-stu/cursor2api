@@ -9,7 +9,7 @@ import 'dotenv/config';
 import { createRequire } from 'module';
 import express from 'express';
 import { getConfig, initConfigWatcher, stopConfigWatcher } from './config.js';
-import { handleMessages, listModels, countTokens, refreshModels } from './handler.js';
+import { handleMessages, listModels, countTokens, refreshModels, autoProbeModels } from './handler.js';
 import { handleOpenAIChatCompletions, handleOpenAIResponses } from './openai-handler.js';
 import { serveLogViewer, apiGetLogs, apiGetRequests, apiGetStats, apiGetVueStats, apiGetPayload, apiLogsStream, serveLogViewerLogin, apiClearLogs, serveVueApp, apiGetRequestsMore } from './log-viewer.js';
 import { apiGetConfig, apiSaveConfig } from './config-api.js';
@@ -204,6 +204,9 @@ app.listen(config.port, () => {
 
     // ★ 启动 config.yaml 热重载监听
     initConfigWatcher();
+
+    // ★ 异步探测候选模型可用性，自动切换到第一个可用模型
+    autoProbeModels().catch(e => console.error('[Models] 自动探测失败:', e));
 });
 
 // ★ 优雅关闭：停止文件监听
